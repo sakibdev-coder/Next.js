@@ -7,7 +7,10 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 export type Workout = { id: number; name: string; image: string; muscleGroups: string[]; equipment: string; difficulty: string; duration: number; caloriesBurned: number; sets: number; reps: string; rating: number; description: string; instructions: string[] };
 type Store = { workouts: Workout[]; plan: number[]; saved: number[]; loading: boolean; toast: string; addToPlan: (id: number) => void; save: (id: number) => void; remove: (id: number, kind: "plan" | "saved") => void; done: (id: number) => void };
 const FitLogContext = createContext<Store | null>(null);
-const API = "https://api.abcz.workers.dev/api/fitlog";
+const APIS = [
+  "https://api.abcz.workers.dev/api/fitlog",
+  "https://api.api-store.workers.dev/api/fitlog",
+];
 
 export function FitLogProvider({ children }: { children: ReactNode }) {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -15,9 +18,36 @@ export function FitLogProvider({ children }: { children: ReactNode }) {
   const [saved, setSaved] = useState<number[]>([]);
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
-  useEffect(() => { fetch(API).then((r) => r.json()).then(setWorkouts).catch(() => setWorkouts([])).finally(() => setLoading(false)); const p = localStorage.getItem("fitlog-plan"); const s = localStorage.getItem("fitlog-saved"); if (p) setPlan(JSON.parse(p)); if (s) setSaved(JSON.parse(s)); }, []);
-  useEffect(() => { localStorage.setItem("fitlog-plan", JSON.stringify(plan)); }, [plan]);
-  useEffect(() => { localStorage.setItem("fitlog-saved", JSON.stringify(saved)); }, [saved]);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    queueMicrotask(() => {
+      const storedPlan = localStorage.getItem("fitlog-plan");
+      const storedSaved = localStorage.getItem("fitlog-saved");
+      if (storedPlan) setPlan(JSON.parse(storedPlan));
+      if (storedSaved) setSaved(JSON.parse(storedSaved));
+      setHydrated(true);
+    });
+
+    const loadWorkouts = async () => {
+      for (const endpoint of APIS) {
+        try {
+          const response = await fetch(endpoint);
+          if (!response.ok) continue;
+          const data = await response.json();
+          if (Array.isArray(data)) {
+            setWorkouts(data);
+            return;
+          }
+        } catch {
+          // Try the alternative API when the primary endpoint is unavailable.
+        }
+      }
+      setWorkouts([]);
+    };
+    loadWorkouts().finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { if (hydrated) localStorage.setItem("fitlog-plan", JSON.stringify(plan)); }, [hydrated, plan]);
+  useEffect(() => { if (hydrated) localStorage.setItem("fitlog-saved", JSON.stringify(saved)); }, [hydrated, saved]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
   const addToPlan = (id: number) => { if (plan.length >= 5) return setToast("Today's plan is full"); if (plan.includes(id)) return setToast("Already in today's plan"); setPlan((v) => [...v, id]); setToast("Added to today's plan"); };
   const save = (id: number) => { if (saved.includes(id)) return setToast("Already saved for later"); setSaved((v) => [...v, id]); setToast("Saved for later"); };
